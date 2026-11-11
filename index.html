@@ -361,7 +361,9 @@ async function qSave(e){e.preventDefault();if(!isAdmin||qSaving)return;const f=n
   if(parts?.name){
    $('q-save-status').textContent='正在上傳零件 ZIP…';
    const attachment={path:crypto.randomUUID()+'.zip',name:parts.name,size:parts.size};
-   const upload=await db.storage.from(QB_PARTS_BUCKET).upload(attachment.path,parts,{contentType:'application/zip',cacheControl:'0',upsert:false});
+   // Multipart uses the Blob's MIME type, which can differ from the upload options.
+   const zip=new Blob([parts],{type:'application/zip'});
+   const upload=await db.storage.from(QB_PARTS_BUCKET).upload(attachment.path,zip,{contentType:'application/zip',cacheControl:'0',upsert:false});
    if(upload.error)throw upload.error;
    uploaded=true;
    payload.parts_file=attachment;
