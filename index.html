@@ -427,7 +427,7 @@ function memberAuthForm(signup=false){
   ${signup?'<label>學校或單位<input name="affiliation" autocomplete="organization" maxlength="120" placeholder="請輸入學校或所屬單位" required></label>':''}
   <label>密碼<input name="password" type="password" autocomplete="${signup?'new-password':'current-password'}" ${signup?'minlength="8"':''} required></label>
   <div class="q-toolbar"><button class="btn" type="submit">${signup?'註冊並寄驗證信':'登入'}</button><button class="btn secondary" type="button" onclick="memberAuthForm(${!signup})">${signup?'返回登入':'註冊會員'}</button></div>
- </form>${signup?'<p class="muted">確認信箱後，即可提交教師證或學生證申請資格驗證。</p>':''}`);
+ </form>${signup?'<p class="muted">確認信箱後，即可提交教師證、學生證等在職／在學證明。</p>':''}`);
 }
 async function openMember(){
  if(!db||memberBusy||sessionBusy)return;
@@ -451,8 +451,9 @@ function memberShowAccount(){
  memberPanel('會員中心',`<p>${esc(user.email)} · 信箱已驗證</p>${affiliation?`<p>學校或單位：${esc(affiliation)}</p>`:''}<p>資格狀態：<strong>${labels[status]||'尚未申請'}</strong></p>
   ${!status||status==='rejected'?`<form class="form" onsubmit="memberSubmitEvidence(event)">
    ${memberAffiliation()?'':'<label>學校或單位<input name="affiliation" autocomplete="organization" maxlength="120" required></label>'}
-   <label>申請資格<select name="kind"><option value="teacher">教師證</option><option value="student">學生證</option></select></label>
-   <label>證件照片（JPG 或 PNG，最大 5 MB）<input type="file" name="evidence" accept="image/jpeg,image/png,.jpg,.jpeg,.png" onchange="memberPrepareProof(this)" required></label>
+   <label>申請資格<select name="kind"><option value="teacher">教師（在職）</option><option value="student">學生（在學）</option></select></label>
+   <label>在職／在學證明（JPG 或 PNG，最大 5 MB）<input type="file" name="evidence" accept="image/jpeg,image/png,.jpg,.jpeg,.png" onchange="memberPrepareProof(this)" required></label>
+   <p class="muted">可提交教師證、學生證，或其他能證明目前在職／在學的文件照片。上傳的證明檔會在資格驗證通過後自動刪除，系統會保留審核結果。</p>
    <p class="muted">請先遮住證號、身分證字號、生日和條碼，保留審核資格所需的資訊。網站會在上傳前加註審核用途和日期。</p>
    <img id="member-proof-preview" class="member-proof" alt="加註浮水印後的證件照片" hidden>
    <button id="member-proof-submit" class="btn" type="submit" disabled>送出資格驗證</button></form>`:''}
@@ -574,10 +575,27 @@ async function memberSubmitEvidence(event){
  }catch(error){if(version===memberView)memberMessage(error.message||'上傳失敗，請稍後再試。')}
  finally{memberSetBusy(false)}
 }
-async function memberReviewList(){
+async function memberCleanupEvidence(paths){
+ if(!paths.length)return;
+ const {error:removeError}=await db.storage.from(MEMBER_BUCKET).remove(paths);
+ if(removeError)throw removeError;
+ const {data:remaining,error}=await db.rpc('finish_skillhub_evidence_cleanup',{paths});
+ if(error)throw error;
+ if(remaining!==0)throw Error('部分證明檔尚未刪除');
+}
+async function memberReviewList(retryCleanup=true){
  if(!isAdmin)return;
  memberPanel('會員資格審核','<p id="member-applicants">正在讀取待審核申請…</p><div id="member-evidence-view"></div>');
  const version=memberView;
+ if(retryCleanup){
+  try{
+   const {data,error}=await db.from('skillhub_evidence_cleanup').select('evidence_path').is('deleted_at',null).order('queued_at').limit(50);
+   if(error)throw error;
+   if(version!==memberView||!isAdmin)return;
+   await memberCleanupEvidence(data.map(item=>item.evidence_path));
+  }catch(error){if(version===memberView)memberMessage('有證明檔尚未刪除，重新開啟資格審核時會再試。')}
+ }
+ if(version!==memberView||!isAdmin)return;
  try{
   const {data,error}=await db.from('skillhub_verifications').select('user_id,email,kind,evidence_path,submitted_at,affiliation').eq('status','pending').order('submitted_at').limit(50);
   if(error)throw error;
@@ -585,7 +603,7 @@ async function memberReviewList(){
   const list=$('member-applicants');
   list.outerHTML='<div id="member-applicants"></div>';
   const container=$('member-applicants');
-  container.innerHTML=data.map((item,index)=>`<div class="q-attachment"><strong>${esc(item.email)}</strong><p>${esc(item.affiliation||'未填寫學校或單位')} · ${item.kind==='teacher'?'教師證':'學生證'} · ${esc(date(item.submitted_at))}</p><button class="btn secondary" type="button" data-applicant="${index}">檢視證件</button></div>`).join('')||'<p>目前沒有待審核申請。</p>';
+  container.innerHTML=data.map((item,index)=>`<div class="q-attachment"><strong>${esc(item.email)}</strong><p>${esc(item.affiliation||'未填寫學校或單位')} · ${item.kind==='teacher'?'教師（在職）':'學生（在學）'} · ${esc(date(item.submitted_at))}</p><button class="btn secondary" type="button" data-applicant="${index}">檢視證明</button></div>`).join('')||'<p>目前沒有待審核申請。</p>';
   for(const button of container.querySelectorAll('[data-applicant]'))button.onclick=()=>memberViewEvidence(data[Number(button.dataset.applicant)]);
  }catch(error){if(version===memberView)memberMessage(error.message||'讀取申請失敗。')}
 }
@@ -607,13 +625,25 @@ async function memberViewEvidence(item){
  }catch(error){if(version===memberView)view.textContent=error.message||'證件讀取失敗。'}
 }
 async function memberDecide(item,decision){
- if(!isAdmin||memberBusy||!confirm(`確認將 ${item.email} 的申請標為「${decision==='approved'?'通過':'不通過'}」？`))return;
+ const approved=decision==='approved';
+ if(!isAdmin||memberBusy||!confirm(approved?`確認通過 ${item.email} 的申請？通過後會刪除上傳的證明檔。`:`確認將 ${item.email} 的申請標為「不通過」？`))return;
  const version=memberView;
  memberSetBusy(true);
  try{
   const {error}=await db.rpc('review_skillhub_verification',{applicant:item.user_id,object_name:item.evidence_path,decision});
   if(error)throw error;
-  if(version===memberView&&isAdmin){await memberReviewList();memberMessage('已儲存審核結果。')}
+  let message='已儲存審核結果。';
+  if(approved){
+   if(version===memberView){memberClearPreview();$('member-evidence-view')?.replaceChildren();memberMessage('資格已通過，正在刪除證明檔…')}
+   try{await memberCleanupEvidence([item.evidence_path]);message='資格已通過，證明檔已刪除。'}
+   catch(error){message='資格已通過，證明檔尚未確認刪除。重新開啟資格審核時會再試。'}
+  }
+  if(version===memberView&&isAdmin){
+   const list=memberReviewList(false);
+   const listVersion=memberView;
+   await list;
+   if(listVersion===memberView&&isAdmin)memberMessage(message);
+  }
  }catch(error){if(version===memberView)memberMessage(error.message||'審核失敗。')}
  finally{memberSetBusy(false)}
 }
