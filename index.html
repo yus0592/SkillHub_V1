@@ -63,6 +63,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid #90BCE9;border-color:#
 #member-dialog{width:min(620px,calc(100% - 24px));max-height:90vh;overflow:auto;padding:24px;border:1px solid #dce8f5;border-radius:16px;color:#15344c}
 #member-dialog::backdrop{background:#10223599}
 .member-proof{display:block;max-width:100%;max-height:62vh;object-fit:contain}
+.member-proof[hidden]{display:none}
 @media(max-width:650px){
   .about-team-layout{grid-template-columns:minmax(0,1fr);gap:12px}
   .about-team-logo{width:160px;margin-inline:auto}
@@ -377,6 +378,7 @@ async function qSave(e){e.preventDefault();if(!isAdmin||qSaving)return;const f=n
 const MEMBER_SITE='https://yus0592.github.io/SkillHub_V1/';
 const MEMBER_BUCKET='skillhub-member-evidence';
 let memberApplication=null,memberBusy=false,memberReviewUrl=null,memberView=0;
+let memberProof=null,memberProofVersion=0;
 
 function memberHasEmail(){return !!(user&&!user.is_anonymous&&user.email_confirmed_at&&user.email)}
 function memberMayDownload(){return isAdmin||(memberHasEmail()&&memberApplication?.status==='approved'&&memberApplication.email===user.email)}
@@ -395,6 +397,12 @@ async function memberRefresh(){
 function memberClearPreview(){
  if(memberReviewUrl)URL.revokeObjectURL(memberReviewUrl);
  memberReviewUrl=null;
+ memberClearProof();
+}
+function memberClearProof(){
+ memberProofVersion++;
+ if(memberProof)URL.revokeObjectURL(memberProof.url);
+ memberProof=null;
 }
 function memberClose(){memberView++;memberClearPreview();$('member-dialog').close()}
 function memberPanel(title,body){
@@ -444,10 +452,58 @@ function memberShowAccount(){
   ${!status||status==='rejected'?`<form class="form" onsubmit="memberSubmitEvidence(event)">
    ${memberAffiliation()?'':'<label>學校或單位<input name="affiliation" autocomplete="organization" maxlength="120" required></label>'}
    <label>申請資格<select name="kind"><option value="teacher">教師證</option><option value="student">學生證</option></select></label>
-   <label>證件檔（PDF、JPG 或 PNG，最大 5 MB）<input type="file" name="evidence" accept=".pdf,.jpg,.jpeg,.png" required></label>
-   <p class="muted">請保留辨識姓名、學校與教師或學生身分所需的資訊，遮住證號、身分證字號、生日、條碼等不需要的資料。證件僅供管理員審核。</p>
-   <button class="btn" type="submit">送出資格驗證</button></form>`:''}
+   <label>證件照片（JPG 或 PNG，最大 5 MB）<input type="file" name="evidence" accept="image/jpeg,image/png,.jpg,.jpeg,.png" onchange="memberPrepareProof(this)" required></label>
+   <p class="muted">請先遮住證號、身分證字號、生日和條碼，保留審核資格所需的資訊。網站會在上傳前加註審核用途和日期。</p>
+   <img id="member-proof-preview" class="member-proof" alt="加註浮水印後的證件照片" hidden>
+   <button id="member-proof-submit" class="btn" type="submit" disabled>送出資格驗證</button></form>`:''}
   <div class="q-toolbar"><button class="btn secondary" onclick="memberLogout()">登出會員</button></div>`);
+}
+async function memberPrepareProof(input){
+ memberClearProof();
+ const version=memberProofVersion,file=input.files[0];
+ const preview=$('member-proof-preview'),button=$('member-proof-submit');
+ preview.hidden=true;preview.removeAttribute('src');button.disabled=true;
+ if(!file){memberMessage('');return}
+ if(!/\.(jpe?g|png)$/i.test(file.name)||!file.size||file.size>5242880){
+  memberMessage('請選擇 5 MB 以內的 JPG 或 PNG 照片。');return;
+ }
+ memberMessage('正在產生加註浮水印的預覽…');
+ let bitmap;
+ try{
+  const bytes=new Uint8Array(await file.slice(0,8).arrayBuffer());
+  const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+  const signature=/\.png$/i.test(file.name)?'89504e470d0a1a0a':'ffd8ff';
+  if(!hex.startsWith(signature))throw Error('照片內容與副檔名不符。');
+  if(version!==memberProofVersion)return;
+  bitmap=await createImageBitmap(file);
+  if(version!==memberProofVersion)return;
+  const canvas=document.createElement('canvas');
+  const scale=Math.min(1,2000/Math.max(bitmap.width,bitmap.height));
+  canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+  canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  const context=canvas.getContext('2d');
+  context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);
+  context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+  const dateText=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei'}).format(new Date());
+  const fontSize=Math.max(12,Math.min(canvas.width*0.042,canvas.height*0.085));
+  context.font=`bold ${fontSize}px system-ui, sans-serif`;
+  context.textAlign='center';context.textBaseline='middle';
+  context.fillStyle='rgba(18,41,61,.68)';context.strokeStyle='rgba(255,255,255,.75)';
+  context.lineWidth=Math.max(1,fontSize*0.10);
+  const watermark=`僅供技聚 SkillHub 內部資格審核｜${dateText}`;
+  for(const position of [0.22,0.50,0.78]){
+   const x=canvas.width/2,y=canvas.height*position;
+   context.strokeText(watermark,x,y,canvas.width*0.92);
+   context.fillText(watermark,x,y,canvas.width*0.92);
+  }
+  const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.92));
+  if(version!==memberProofVersion)return;
+  if(!blob||blob.size>5242880)throw Error('無法產生 5 MB 以內的預覽，請換一張照片。');
+  memberProof={file,blob,url:URL.createObjectURL(blob)};
+  preview.src=memberProof.url;preview.hidden=false;button.disabled=false;
+  memberMessage('請確認加註後的照片可辨識，再按「送出資格驗證」。');
+ }catch(error){if(version===memberProofVersion)memberMessage(error.message||'無法處理這張照片，請換一張再試。')}
+ finally{bitmap?.close()}
 }
 async function memberSignIn(event){
  event.preventDefault();
@@ -496,24 +552,20 @@ async function memberSubmitEvidence(event){
  const fields=new FormData(event.currentTarget),file=fields.get('evidence'),actor=user.id,version=memberView;
  const affiliation=memberAffiliation()||String(fields.get('affiliation')||'').trim();
  if(!affiliation||affiliation.length>120){memberMessage('請填寫 120 字以內的學校或單位。');return}
- const formats={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png'};
- const suffix=file?.name.split('.').pop().toLowerCase(),mime=formats[suffix];
- if(!mime||!file.size||file.size>5242880){memberMessage('請選擇 5 MB 以內的 PDF、JPG 或 PNG。');return}
+ const proof=memberProof;
+ const selected=event.currentTarget.elements.evidence.files[0];
+ if(!proof||proof.file!==selected||!file?.size){memberMessage('請先選擇證件照片並確認浮水印預覽。');return}
  memberSetBusy(true);memberMessage('正在上傳證件…');
  try{
-  const bytes=new Uint8Array(await file.slice(0,8).arrayBuffer());
-  const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
-  const signature={pdf:'255044462d',jpg:'ffd8ff',jpeg:'ffd8ff',png:'89504e470d0a1a0a'}[suffix];
-  if(!hex.startsWith(signature))throw Error('檔案內容與副檔名不符。');
   if(user?.id!==actor||version!==memberView)return;
   if(!memberAffiliation()){
    const {data,error}=await db.auth.updateUser({data:{affiliation}});
    if(error)throw error;
-   if(user?.id!==actor||version!==memberView)return;
+   if(user?.id!==actor||version!==memberView||memberProof!==proof)return;
    user=data.user;
   }
-  const path=`${actor}/${crypto.randomUUID()}.${suffix==='jpeg'?'jpg':suffix}`;
-  const upload=await db.storage.from(MEMBER_BUCKET).upload(path,file,{contentType:mime,upsert:false,cacheControl:'0'});
+  const path=`${actor}/${crypto.randomUUID()}.jpg`;
+  const upload=await db.storage.from(MEMBER_BUCKET).upload(path,proof.blob,{contentType:'image/jpeg',upsert:false,cacheControl:'0'});
   if(upload.error)throw upload.error;
   if(user?.id!==actor)return;
   const {error}=await db.rpc('submit_skillhub_verification',{kind:fields.get('kind'),object_name:path});
