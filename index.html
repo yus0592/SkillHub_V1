@@ -85,6 +85,9 @@ input:focus,select:focus,textarea:focus{outline:2px solid #90BCE9;border-color:#
 .energy-community p{margin:0;color:#4e6578}
 .energy-community a{text-decoration:none}
 .energy-admin [hidden]{display:none}
+.energy-inventory-panel{margin-top:22px;border-top:1px solid #d9e5f0;padding-top:14px}
+.energy-inventory-panel summary{cursor:pointer;font-weight:700;padding:8px 0}
+.energy-inventory-panel li{line-height:1.65;margin-block:6px;overflow-wrap:anywhere}
 @media(max-width:650px){
   .energy-hero{grid-template-columns:minmax(0,1fr)}
   .energy-card{min-height:320px}
@@ -758,6 +761,23 @@ function energyCardLabel(card){
  const series=card.series==='community'?'來自大家的一句話':'技聚精選';
  return category?`${series} · ${category.label}`:series;
 }
+function energyRenderInventory(){
+ const list=$('energy-inventory'),summary=$('energy-inventory-summary');
+ if(!isAdmin||!list||!summary)return;
+ const cards=energyPool();
+ const featured=cards.filter(card=>card.series==='featured');
+ const community=cards.filter(card=>card.series==='community');
+ summary.textContent=`目前卡池 · ${cards.length} 張`;
+ const rows=items=>`<ul>${items.map(card=>`<li>${esc(card.quote)}${card.credit?` <span class="muted">— ${esc(card.credit)}</span>`:''}</li>`).join('')}</ul>`;
+ list.innerHTML=`${energyLoading?'<p class="muted">正在讀取網站上架的卡片…</p>':energyLoadError?'<p class="muted">網站上架的卡片讀取失敗，清單可能不完整。</p>':''}
+  <h3>技聚精選（${featured.length} 張）</h3>
+  ${ENERGY_CATEGORIES.map(group=>{
+   const items=featured.filter(card=>card.category===group.id);
+   return `<details><summary>${esc(group.label)}（${items.length} 張）</summary>${rows(items)}</details>`;
+  }).join('')}
+  <h3>來自大家的一句話（${community.length} 張）</h3>
+  ${community.length?rows(community):'<p class="muted">目前沒有已上架的投稿。</p>'}`;
+}
 function energyRenderCard(){
  const container=$('energy-card');
  if(!container)return;
@@ -859,6 +879,7 @@ async function energyLoadCards(){
  if(energyLoading||energySaving)return;
  energyLoading=true;
  energyRenderCard();
+ energyRenderInventory();
  try{
   const cards=[];
   if(db){
@@ -879,6 +900,7 @@ async function energyLoadCards(){
   energyLoading=false;
   if(page==='energy'){
    energyRenderCard();
+   energyRenderInventory();
    const status=$('energy-admin-status');
    if(status&&energyLoadError&&!status.textContent)status.textContent='目前無法讀取新增卡片。請確認已完成資料庫設定，或稍後再試。';
   }
@@ -905,9 +927,10 @@ function renderEnergy(){
    <label data-energy-credit hidden>公開署名或身分（選填）<input name="credit" maxlength="60" placeholder="例如：歷屆選手" disabled></label>
    <label>卡片文字<textarea name="quote" maxlength="180" rows="3" required></textarea></label>
    <div><button type="submit" class="btn">上架卡片</button></div><p id="energy-admin-status" role="status" class="muted">${energyLoadError?'目前無法讀取新增卡片。':''}</p>
-  </form></section>`:''}
+  </form><details class="energy-inventory-panel"><summary id="energy-inventory-summary">目前卡池</summary><div id="energy-inventory"></div></details></section>`:''}
  </div>`;
  energyRenderCard();
+ energyRenderInventory();
  void energyLoadCards();
 }
 async function energyAddCard(event){
@@ -926,6 +949,7 @@ async function energyAddCard(event){
   const {data,error}=await db.from('skillhub_energy_cards').insert(payload).select('id,series,category,quote,credit').single();
   if(error)throw error;
   energyRemoteCards=(energyRemoteCards||[]).filter(card=>card.id!==data.id).concat(data);
+  energyRenderInventory();
   form.elements.quote.value='';form.elements.credit.value='';
   status.textContent='卡片已上架，會出現在之後的抽卡中。';
  }catch(error){status.textContent='上架失敗：'+(error.message||'請稍後再試。')}
