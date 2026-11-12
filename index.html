@@ -175,28 +175,100 @@ async function init(){if(!db){notice('無法載入 Supabase，請檢查網路或
 init();setInterval(()=>{if(document.visibilityState==='visible')void memberRefreshPendingCount();if(!db||busy||sessionBusy||document.visibilityState!=='visible'||loginOpen||!$('overlay').classList.contains('hide'))return;if(page==='article'&&$('commentbody')&&($('commentbody')===document.activeElement||$('commentauthor')===document.activeElement))return;refresh({quiet:true})},20000);
 
 // SkillHub V3.5：每題最多三份 PDF，透過私人 Storage RLS 讀取後在本機預覽。
-const QB_TYPES={
+const QB_TYPES=Object.assign(Object.create(null),{
  '工業類科技藝競賽':{trades:['電腦輔助機械製圖','機械製圖'],stages:['模擬賽','正式賽']},
  '全國技能競賽':{trades:['CAD 機械設計製圖'],stages:['分區淘汰賽','分區正式賽','全國賽','第二階段國手選拔','亞洲技能競賽','國際技能競賽']}
-};
+});
 const QB_COLUMNS='id,title,competition_type,trade,stage,year,description,preview_content,status,created_at,updated_at,pdf_path,pdf_name,pdf_size,pdf_files,parts_file,is_practice,practice_answer';
-const QB_PRACTICE_CATEGORY={competition_type:'技聚自製',trade:'CAD 機械設計製圖',stage:'模擬練習'};
+const QB_PRACTICE_CATEGORY={competition_type:'技聚自製',stage:'模擬練習'};
 const QB_PARTS_BUCKET='skillhub-question-parts',QB_PARTS_MAX=20*1024*1024;
 const QB_PDF_BUCKET='skillhub-question-pdfs',QB_PDF_MAX=20*1024*1024;
 let qBlobUrl=null,qPdfVersion=0,qEditVersion=0;
 let qRows=[],qLoaded=false,qLoading=false,qError='',qVersion=0,qOffset=0,qTotal=0,qSaving=false;
 let qFilters={keyword:'',competition_type:'',trade:'',stage:'',year:'',status:''};
+let qCategoriesRequest;
 function qClearPdf(){qPdfVersion++;if(qBlobUrl){URL.revokeObjectURL(qBlobUrl);qBlobUrl=null}}
 function qCloseEditor(){qEditVersion++;qClearPdf();$('q-editor')?.replaceChildren()}
 function qIsPage(route=page){return route==='library'||route==='practice'}
 function clearQuestionCache(){qVersion++;qRows=[];qLoaded=false;qLoading=false;qError='';qOffset=0;qTotal=0;qCloseEditor();if(qIsPage())$('q-results')?.replaceChildren()}
 function qOptions(values,selected,all){return (all!==undefined?`<option value="">${esc(all)}</option>`:'')+values.map(v=>`<option value="${esc(v)}" ${String(v)===String(selected)?'selected':''}>${esc(v)}</option>`).join('')}
-function qChoices(kind,type){return type?QB_TYPES[type][kind]:[...new Set(Object.values(QB_TYPES).flatMap(g=>g[kind]))]}
+function qChoices(kind,type){return type?(QB_TYPES[type]?.[kind]||[]):[...new Set(Object.values(QB_TYPES).flatMap(g=>g[kind]))]}
+function qAddCategoryOption({competition_type,kind,label}){
+ const group=QB_TYPES[competition_type]??={trades:[],stages:[]};
+ const options=kind==='trade'?group.trades:group.stages;
+ if(!options.includes(label))options.push(label);
+}
+function qRefreshCategoryFilters(){
+ const fields=$('q-search')?.elements;
+ if(page!=='library'||!fields?.competition_type)return;
+ const competition=fields.competition_type.value;
+ fields.competition_type.innerHTML=qOptions(Object.keys(QB_TYPES),competition,'全部競賽');
+ fields.trade.innerHTML=qOptions(qChoices('trades',competition),fields.trade.value,'全部職類');
+ fields.stage.innerHTML=qOptions(qChoices('stages',competition),fields.stage.value,'全部階段');
+}
+function qLoadCategories(){
+ if(!db)return;
+ return qCategoriesRequest??=(async()=>{
+  for(let offset=0;;offset+=200){
+   const result=await db.from('skillhub_question_categories').select('competition_type,kind,label')
+    .order('competition_type').order('kind').order('label').range(offset,offset+199);
+   if(result.error)throw result.error;
+   const rows=result.data||[];
+   for(const row of rows)qAddCategoryOption(row);
+   if(rows.length<200)break;
+  }
+  qRefreshCategoryFilters();
+ })().catch(error=>{qCategoriesRequest=null;console.error('讀取題庫分類失敗',error)});
+}
+function qOpenCategories(){
+ if(!isAdmin||page!=='library'||qSaving)return;
+ qCloseEditor();
+ $('q-editor').innerHTML=`<section class="panel q-form"><h2>新增題庫分類</h2>
+ <form class="form" onsubmit="qSaveCategory(event)">
+ <label>競賽名稱<input name="competition_type" required maxlength="120" list="q-competition-options"></label>
+ <datalist id="q-competition-options">${qOptions(Object.keys(QB_TYPES))}</datalist>
+ <label>職類名稱<input name="trade" required maxlength="120"></label>
+ <label>階段（選填）<input name="stage" maxlength="120"></label>
+ <p class="notice">可選擇既有競賽或輸入新名稱。新競賽未填階段時，會加入「正式賽」。</p>
+ <p id="q-category-status" role="status"></p>
+ <div class="dialog-actions"><button type="button" class="btn secondary" onclick="qCloseEditor()">關閉</button><button type="submit" class="btn">儲存分類</button></div>
+ </form></section>`;
+ $('q-editor').querySelector('input')?.focus();
+}
+async function qSaveCategory(event){
+ event.preventDefault();
+ if(!isAdmin||page!=='library')return;
+ const form=event.currentTarget,button=form.querySelector('button[type="submit"]');
+ const status=$('q-category-status');
+ if(button.disabled)return;
+ const fields=new FormData(form);
+ const competition=String(fields.get('competition_type')||'').trim();
+ const trade=String(fields.get('trade')||'').trim();
+ if(!competition||!trade||competition===QB_PRACTICE_CATEGORY.competition_type){
+  status.textContent='請填寫競賽與職類名稱，並使用其他名稱取代「技聚自製」。';
+  return;
+ }
+ button.disabled=true;
+ status.textContent='正在儲存分類…';
+ try{
+  await qLoadCategories();
+  if(!isAdmin||page!=='library'||!form.isConnected)return;
+  const stage=String(fields.get('stage')||'').trim()||(qChoices('stages',competition).length?'':'正式賽');
+  const rows=[{competition_type:competition,kind:'trade',label:trade}];
+  if(stage)rows.push({competition_type:competition,kind:'stage',label:stage});
+  const result=await db.from('skillhub_question_categories').upsert(rows,{ignoreDuplicates:true,onConflict:'competition_type,kind,label'});
+  if(result.error)throw result.error;
+  for(const row of rows)qAddCategoryOption(row);
+  qRefreshCategoryFilters();
+  status.textContent='已儲存，可在新增或編輯題目時選用。';
+ }catch(error){status.textContent='儲存分類失敗：'+error.message}
+ finally{button.disabled=false}
+}
 function renderLibrary(){
  qCloseEditor();
  const a=$('app');
  const practice=page==='practice';
- a.innerHTML=`<div class="library-header">${practice?'<h1>技聚練習場</h1><p>技聚團隊自製的 CAD 機械設計製圖模擬試題。任何人都可下載附件，做完再展開參考解答。</p>':'<h1>競賽題庫</h1><p>搜尋題目與查看文字預覽。通過會員資格驗證後可閱讀及下載附件。</p>'}</div>
+ a.innerHTML=`<div class="library-header">${practice?'<h1>技聚練習場</h1><p>技聚團隊自製的模擬試題。任何人都可下載附件，做完再展開參考解答。</p>':'<h1>競賽題庫</h1><p>搜尋題目與查看文字預覽。通過會員資格驗證後可閱讀及下載附件。</p>'}</div>
  <form id="q-search" class="panel q-form" onsubmit="qSearch(event)"><div class="q-grid">
  ${practice?'':`<label>競賽<select name="competition_type" onchange="qChangeType(this.value)">${qOptions(Object.keys(QB_TYPES),qFilters.competition_type,'全部競賽')}</select></label>
  <label>職類<select name="trade">${qOptions(qChoices('trades',qFilters.competition_type),qFilters.trade,'全部職類')}</select></label>
@@ -204,15 +276,24 @@ function renderLibrary(){
  <label>西元年度<input name="year" type="number" min="1900" max="2200" placeholder="例如 2026" value="${esc(qFilters.year)}"></label>
  ${isAdmin?`<label>發布狀態<select name="status">${qOptions(['draft','published','archived'],qFilters.status,'全部狀態')}</select></label>`:''}</div>
  <div class="q-toolbar"><input id="q-keyword" name="keyword" maxlength="100" aria-label="題目關鍵字" placeholder="搜尋題目名稱、介紹或預覽文字" value="${esc(qFilters.keyword)}"><button class="btn">搜尋</button><button class="btn secondary" type="button" onclick="qReset()">清除篩選</button></div></form>
- <div class="q-toolbar">${isAdmin?`<button class="btn" onclick="qEdit()">＋ ${practice?'新增自製題':'新增題目'}</button>${practice?'':'<button class="btn secondary" onclick="qOpenPdfInventory()">PDF 檔案清單</button>'}`:''}<button class="btn secondary" onclick="qReload()">重新載入</button></div>
+ <div class="q-toolbar">${isAdmin?`<button class="btn" onclick="qEdit()">＋ ${practice?'新增自製題':'新增題目'}</button>${practice?'':'<button class="btn secondary" onclick="qOpenCategories()">＋ 新增分類</button><button class="btn secondary" onclick="qOpenPdfInventory()">PDF 檔案清單</button>'}`:''}<button class="btn secondary" onclick="qReload()">重新載入</button></div>
  <div id="q-results" aria-live="polite"></div><div id="q-editor"></div>`;
  qRenderResults();if(!qLoaded&&!qLoading)qLoad();
+ if(!practice)qLoadCategories();
 }
 function qReadFilters(){const f=new FormData($('q-search'));for(const k of Object.keys(qFilters))qFilters[k]=String(f.get(k)||'').trim()}
 function qChangeType(type){qReadFilters();qFilters.competition_type=type;qFilters.trade='';qFilters.stage='';renderLibrary()}
 function qSearch(e){e.preventDefault();qReadFilters();qOffset=0;qLoad()}
 function qReset(){qFilters={keyword:'',competition_type:'',trade:'',stage:'',year:'',status:''};qOffset=0;renderLibrary();qLoad()}
-function qReload(){qLoad()}
+async function qReload(){
+ if(page==='library'){
+  await qCategoriesRequest;
+  if(page!=='library')return;
+  qCategoriesRequest=null;
+  qLoadCategories();
+ }
+ qLoad();
+}
 async function qLoad(){
  const version=++qVersion;qLoading=true;qError='';qRows=[];qCloseEditor();qRenderResults();
  try{
@@ -353,9 +434,13 @@ async function qOpenPdfInventory(){
 }
 function qEdit(id){if(!isAdmin||qSaving)return;const q=id?qRows.find(q=>q.id===id):{title:'',competition_type:Object.keys(QB_TYPES)[0],year:new Date().getFullYear(),description:'',preview_content:'',status:'draft'};if(!q)return;qCloseEditor();
  const practice=page==='practice';
+ if(!practice&&id){
+  qAddCategoryOption({competition_type:q.competition_type,kind:'trade',label:q.trade});
+  qAddCategoryOption({competition_type:q.competition_type,kind:'stage',label:q.stage});
+ }
  $('q-editor').innerHTML=`<section class="panel q-form"><h2>${id?'編輯題目':'新增題目'}</h2><form class="form" id="q-edit" onsubmit="qSave(event)"><input type="hidden" name="id" value="${esc(q.id||'')}"><input type="hidden" name="updated_at" value="${esc(q.updated_at||'')}">
  <label>題目名稱<input name="title" required maxlength="150" value="${esc(q.title)}"></label>
- ${practice?'':`<label>競賽<select name="competition_type" onchange="qEditType(this.value)">${qOptions(Object.keys(QB_TYPES),q.competition_type)}</select></label>
+ ${practice?`<label>職類（選填）<input name="trade" maxlength="120" placeholder="留空顯示為不限職類" value="${esc(q.trade==='不限職類'?'':q.trade||'')}"></label>`:`<label>競賽<select name="competition_type" onchange="qEditType(this.value)">${qOptions(Object.keys(QB_TYPES),q.competition_type)}</select></label>
  <label>職類<select name="trade">${qOptions(qChoices('trades',q.competition_type),q.trade)}</select></label>
  <label>階段<select name="stage">${qOptions(qChoices('stages',q.competition_type),q.stage)}</select></label>`}
  <label>西元年度<input name="year" required type="number" min="1900" max="2200" value="${esc(q.year)}"></label>
@@ -390,6 +475,7 @@ async function qSave(e){e.preventDefault();if(!isAdmin||qSaving)return;const f=n
  const practice=page==='practice';
  if(practice){
   Object.assign(payload,QB_PRACTICE_CATEGORY,{practice_answer:String(f.get('practice_answer')||'').trim()});
+  payload.trade=payload.trade||'不限職類';
   if(!id)payload.is_practice=true;
   if(payload.status==='published'&&!payload.practice_answer){$('q-save-status').textContent='請填寫參考解答，再發布自製題。';return}
  }
