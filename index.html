@@ -166,7 +166,7 @@ function render(){document.querySelectorAll('[data-nav]').forEach(b=>b.classList
  if(page==='analytics'){renderActivity();return}
  if(qIsPage()){renderLibrary();return}
  if(page==='article'){renderArticleContent();return}
- const isHome=page==='home',arr=filtered();a.innerHTML=`${isHome?ANNOUNCEMENT:''}${isHome?'<section class="hero"><div><h1>因技而聚，交流共進。</h1><p>給正在備賽、練習卡關，或剛比完賽的你。<br>來聊聊訓練和心情，也給自己抽一句鼓勵。</p></div><button class="btn" onclick="navigate(\'forum\')">探索討論區 →</button></section>':''}${isHome?HOME_TRAINING_LINK:forumTabs()}<section class="section"><div class="titlebar"><h2>${isHome?'最新討論':'一般討論'}</h2><button class="btn" onclick="openModal()">＋ 發起討論</button></div>${isHome?'':`<div class="filters"><select id="cat" onchange="filter=this.value;refreshList()"><option value="">全部分類</option>${['技術交流','題目討論','競賽交流','綜合討論'].map(c=>`<option ${filter===c?'selected':''}>${c}</option>`).join('')}</select><input id="query" placeholder="搜尋文章標題或內容" value="${esc(search)}" oninput="search=this.value;refreshList()"></div>`}<div id="listing">${listHTML(isHome?arr.slice(0,5):arr)}</div></section>${isHome?'<div style="text-align:center;margin-top:20px"><button class="btn secondary" onclick="navigate(\'forum\')">查看全部討論 →</button></div>':''}`}
+ const isHome=page==='home',arr=filtered();a.innerHTML=`${isHome?ANNOUNCEMENT:''}${isHome?'<section class="hero"><div><h1>因技而聚，交流共進。</h1><p>給正在備賽、練習卡關，或剛比完賽的你。<br>來聊聊訓練和心情，也給自己抽一句鼓勵。</p></div><button class="btn" onclick="navigate(\'forum\')">探索討論區 →</button></section>':''}${isHome?HOME_TRAINING_LINK:forumHeader()}<section class="section"><div class="titlebar"><h2>${isHome?'最新討論':'一般討論'}</h2><button class="btn" onclick="openModal()">＋ 發起討論</button></div>${isHome?'':`<div class="filters"><select id="cat" onchange="filter=this.value;refreshList()"><option value="">全部分類</option>${['技術交流','題目討論','競賽交流','綜合討論'].map(c=>`<option ${filter===c?'selected':''}>${c}</option>`).join('')}</select><input id="query" placeholder="搜尋文章標題或內容" value="${esc(search)}" oninput="search=this.value;refreshList()"></div>`}<div id="listing">${listHTML(isHome?arr.slice(0,5):arr)}</div></section>${isHome?'<div style="text-align:center;margin-top:20px"><button class="btn secondary" onclick="navigate(\'forum\')">查看全部討論 →</button></div>':''}`}
 function refreshList(){renderListingOnly()}
 function openModal(){const athlete=page==='athlete';$('post-dialog-title').textContent=athlete?'寫下心裡話':'發起新討論';$('post-category').hidden=athlete;$('post-reply-preference').hidden=!athlete;$('overlay').classList.remove('hide')}
 function closeModal(){$('overlay').classList.add('hide')}
@@ -1172,8 +1172,9 @@ async function loadActivity(){
 
 const REPLY_PREFERENCES={advice:'想聽建議',encouragement:'想要一點鼓勵',share:'只是想說說'};
 
-function forumTabs(){
- return `<nav class="q-toolbar" aria-label="討論區頁面">
+function forumHeader(){
+ return `<div class="library-header"><h1>討論區</h1></div>
+ <nav class="q-toolbar" aria-label="討論區頁面">
  <button class="btn ${page==='forum'?'':'secondary'}" ${page==='forum'?'aria-current="page"':''} onclick="navigate('forum')">一般討論</button>
  <button class="btn ${page==='athlete'?'':'secondary'}" ${page==='athlete'?'aria-current="page"':''} onclick="navigate('athlete')">選手心裡話</button>
  </nav>`;
@@ -1183,7 +1184,7 @@ function forumReplyLabel(post){
  return label?`<span class="tag trade">${label}</span>`:'';
 }
 function renderAthleteForum(){
- $('app').innerHTML=`<div class="library-header"><h1>討論區</h1></div>${forumTabs()}
+ $('app').innerHTML=`${forumHeader()}
  <section class="panel article"><div class="titlebar"><h2>選手心裡話</h2><button class="btn" onclick="openModal()">寫下心裡話</button></div>
  <p>練習卡住了、快上場有點緊張，或想分享今天的一點進步，都可以在這裡說。</p></section>
  <section class="section" aria-label="心裡話文章"><div class="filters"><input id="query" aria-label="搜尋心裡話" placeholder="搜尋心裡話" value="${esc(search)}" oninput="search=this.value;refreshList()"></div>
