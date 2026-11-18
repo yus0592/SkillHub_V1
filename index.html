@@ -79,7 +79,8 @@ input:focus,select:focus,textarea:focus{outline:2px solid #90BCE9;border-color:#
 .energy-credit,.energy-footnote{margin:5px 0;color:#deebf6;font-size:14px}
 .energy-draw{background:#ffda80;color:#17304b}
 .energy-draw:disabled{opacity:.7}
-.energy-save{margin-top:14px}
+.energy-card-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px;max-width:100%;margin-top:8px}
+.energy-talk{margin-top:20px}
 .energy-community{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:22px;border:1px solid #d9e5f0;border-radius:16px;background:#fff}
 .energy-community h2,.energy-admin h2{margin:0 0 8px}
 .energy-community p{margin:0;color:#4e6578}
@@ -928,9 +929,11 @@ function energyRenderCard(){
    <blockquote>${esc(card.quote)}</blockquote>
    ${card.credit?`<p class="energy-credit">${esc(card.credit)}</p>`:''}
    <p class="energy-footnote">${drawStatus}</p>
-   <button type="button" class="btn energy-draw energy-save" onclick="energySaveCard(this)">儲存卡片（PNG）</button>
-   ${drawButton}
-   <button type="button" class="btn secondary" onclick="navigate('athlete')">想說說今天的心情？</button>
+   <div class="energy-card-actions">
+    <button type="button" class="btn energy-draw" onclick="energySaveCard(this)">儲存卡片（PNG）</button>
+    ${drawButton}
+   </div>
+   <button type="button" class="btn secondary energy-talk" onclick="navigate('athlete')">想說說今天的心情？</button>
    <p id="energy-save-status" class="energy-footnote" role="status" hidden></p>`;
   return;
  }
