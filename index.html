@@ -170,7 +170,7 @@ async function refresh({quiet=false}={}){if(!db)return;if(sessionBusy)return;try
  if(!quiet)notice('');
  if(page==='energy'){if(!$('energy-card')||Boolean($('energy-admin-status'))!==isAdmin)renderEnergy();return}if(qIsPage()||page==='about'||page==='analytics'||page==='training'||page==='radio'){return}else if(page==='article'&&$('commentbody')){saveDraft();renderArticleContent();}else if((page==='forum'||page==='athlete')&&$('query')){renderListingOnly()}else render();
  }catch(e){console.error(e);if(!quiet)notice('資料讀取失敗：'+e.message)}}
-function navigate(p,id){syncRadioUrl(p,id);if(p!==page&&qIsPage(p))void recordActivity(p==='library'?'library_open':'practice_open');qCloseEditor();if(qIsPage(p))clearQuestionCache();saveDraft();page=p;current=id||null;filter='';search='';render();window.scrollTo(0,0)}
+function navigate(p,id){syncRadioUrl(p,id);recordPageActivity(p,id);qCloseEditor();if(qIsPage(p))clearQuestionCache();saveDraft();page=p;current=id||null;filter='';search='';render();window.scrollTo(0,0)}
 const ANNOUNCEMENT='<section class="test-announcement" aria-label="網站測試階段置頂公告"><div class="test-announcement-head"><span>📌 置頂公告</span><strong>技聚 SkillHub｜網站測試階段公告</strong></div><div class="test-announcement-body"><p>歡迎來到 <b>技聚 SkillHub</b>！這是一個以技職教育、技能競賽與技術交流為核心的共享平台，希望讓不同學校的選手、教師與技術愛好者，都能分享經驗、交流想法。</p><p><b>目前網站仍處於測試階段，尚未正式上線。</b>我們最希望聽見你的想法：<b>你期待技聚未來提供哪些功能？</b> 無論是歷屆競賽題庫、訓練資源共享、技術問答、競賽經驗交流，或其他實用功能，都歡迎到討論區提出建議，也歡迎測試發文、留言、按讚並回報問題。</p><p class="test-announcement-warning"><b>重要提醒：</b>測試期間的文章、留言與按讚等資料，預計在正式網站上線前統一清除，不會自動保留或轉移至正式版。請勿張貼個人敏感資料或機密資訊；網站功能與規則也可能持續調整。</p><p>每一則建議，都是讓技聚變得更好的重要參考。感謝你一起參與！<br><b>因技而聚，交流共進。</b> — 技聚 SkillHub 管理團隊</p><button type="button" class="btn secondary" onclick="navigate(\'forum\')">前往討論區分享建議</button></div></section>';
 function postHTML(p){return `<div class="post" onclick="navigate('article','${esc(p.id)}')"><span class="tag">${esc(p.forum_board==='athlete'?'選手心裡話':p.category)}</span>${forumReplyLabel(p)}${p.trade?`<span class="tag trade">${esc(p.trade)}</span>`:''}<h3>${esc(p.title)}</h3><div class="meta"><span>${esc(p.author)}</span><span>${esc(p.date)}</span><span>💬 ${p.comments.length} 則留言</span><span>♡ ${p.likes||0}</span></div></div>`}
 function listHTML(items){return `<div class="panel">${items.length?items.map(postHTML).join(''):'<div class="empty">目前沒有符合條件的討論</div>'}</div>`}
@@ -1209,10 +1209,30 @@ const ACTIVITY_LABELS={
  site_visit:'網站瀏覽',
  library_open:'競賽題庫',
  practice_open:'練習場',
- energy_draw:'能量補給抽卡'
+ energy_draw:'能量補給抽卡',
+ forum_open:'一般討論',
+ athlete_open:'選手心裡話',
+ training_open:'學長姊的那一天',
+ training_read:'故事文章閱讀',
+ radio_open:'技聚電台',
+ radio_read:'電台單集瀏覽',
+ radio_play:'電台觀看／收聽連結點擊'
 };
 let activityVisitorId;
 let activityRequest=0;
+let activityContentKey='';
+function recordPageActivity(next,id){
+ if(next===page&&(id||null)===current)return;
+ activityContentKey='';
+ const event={library:'library_open',practice:'practice_open',forum:'forum_open',athlete:'athlete_open',training:'training_open',radio:'radio_open'}[next];
+ if(event&&!id)void recordActivity(event);
+}
+function recordContentActivity(event,id){
+ const key=event+'/'+id;
+ if(activityContentKey===key)return;
+ activityContentKey=key;
+ void recordActivity(event);
+}
 
 async function recordActivity(eventKey){
  if(!db||window.location?.protocol!=='https:')return;
@@ -1325,6 +1345,7 @@ async function renderTraining(offset=0){
   if(id){
    const guide=result.data;
    trainingStory=guide;
+   if(guide?.published)recordContentActivity('training_read',guide.id);
    content.innerHTML=guide?`<article class="panel article"><span class="tag">${esc(guide.topic)}</span><h1>${esc(guide.title)}</h1>
    <p class="muted">${[guide.trade,guide.credit].filter(Boolean).map(esc).join(' · ')}</p>
    ${admin?`<p class="muted">${guide.published?'已發布':'草稿'}</p><button class="btn secondary" onclick="editTraining()">編輯文章</button>`:''}
@@ -1423,6 +1444,7 @@ function initRadio(){
  void updateRadioNav();
  const route=radioRoute();
  if(route){page='radio';current=route.id;renderRadio()}
+ if(route&&!route.id)void recordActivity('radio_open');
  const article=sharedArticleRoute();
  if(article){page=article.page;current=article.id}
  window.addEventListener?.('popstate',restoreRadioRoute);
@@ -1452,7 +1474,7 @@ function radioCover(episode){
 function radioLinks(episode){
  const youtube=radioUrl(episode.youtube_url);
  const podcasts=(episode.podcast_links||[]).map(radioUrl).filter(Boolean);
- const link=(url,label)=>`<a class="btn secondary" href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>`;
+ const link=(url,label)=>`<a class="btn secondary" href="${esc(url.href)}" onclick="void recordActivity('radio_play')" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>`;
  const podcastLink=url=>link(url,url.hostname==='open.spotify.com'?'聽 Spotify':url.hostname==='podcasts.apple.com'?'聽 Apple Podcasts':`聽 Podcast（${url.hostname}）`);
  return `<div class="radio-actions">${youtube?link(youtube,'看 YouTube'):''}
  ${podcasts.length===1?link(podcasts[0],'聽 Podcast'):podcasts.length>1?`<details><summary>聽 Podcast</summary><div class="q-toolbar">${podcasts.map(podcastLink).join('')}</div></details>`:''}</div>`;
@@ -1514,6 +1536,7 @@ async function renderRadio(){
    radioEpisode=result.data;
    if(!radioEpisode){$('radio-content').textContent='目前無法查看這一集。';return}
    const episode=radioEpisode;
+   if(episode.published)recordContentActivity('radio_read',episode.id);
    $('radio-content').innerHTML=`<article class="panel radio-tile radio-featured">${radioCover(episode)}
     <div class="radio-tile-copy"><p class="muted">${radioMeta(episode)}</p><h2>${esc(episode.title)}</h2>
     <p class="q-preview">${esc(episode.summary)}</p>${radioLinks(episode)}
